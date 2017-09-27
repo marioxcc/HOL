@@ -639,7 +639,7 @@ val _ = let
       (REPEAT_LT (ALLGOALS (POP_ASSUM (fn _ => ALL_TAC))
 	  THEN_LT HEADGOAL (POP_ASSUM ACCEPT_TAC))) ] ;
   val th = prove (``a ==> b ==> c ==> d ==> a /\ b /\ c /\ d``, tac) ;
-in if hyp th = [] then OK() else die "FAILED"
+in if null (hyp th) then OK() else die "FAILED"
 end handle _ => die "FAILED!"
 
 val _ = let
@@ -648,7 +648,7 @@ val _ = let
     THENL [POP_ASSUM MATCH_MP_TAC THEN CONJ_TAC, DISJ1_TAC]
     THEN (FIRST_ASSUM ACCEPT_TAC)
   val th = prove (``p ==> q ==> (p /\ q ==> r) ==> r /\ (r \/ s)``, tac) ;
-in if hyp th = [] then OK() else die "FAILED"
+in if null (hyp th) then OK() else die "FAILED"
 end handle _ => die "FAILED!"
 
 val _ = let
@@ -662,7 +662,7 @@ val _ = let
   val g = ``(p ==> q ==> (p /\ q ==> r) ==> r) /\
     (p ==> q ==> (p ==> r) ==> r)``
   val th = prove (g, tac) ;
-in if hyp th = [] then OK() else die "FAILED"
+in if null (hyp th) then OK() else die "FAILED"
 end handle _ => die "FAILED!"
 
 val _ = let

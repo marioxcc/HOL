@@ -14,7 +14,9 @@ fun listDir s =
       recurse [] before FileSys.closeDir ds
    end
 
-fun pointer_eq (x: 'a, y: 'a) = PolyML.pointerEq (x, y)
+fun pointer_eq (x: 'a, y: 'a) =
+  (* PolyML.pointerEq (x, y) *)
+  raise Fail "Don't use pointer-equality with Poly/ML"
 fun ref_to_int (x: 'a ref) = 0 (* needs fixing *)
 
 fun catch_SIGINT () = ()
