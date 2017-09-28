@@ -262,17 +262,9 @@ val _ =
       SOME ([([],subgoal)],_) => if aconv subgoal expected then OK()
                                  else die "FAILED!"
     | _ => die "FAILED!"
-end (* local *)
+end; (* local *)
 
-fun convtest (nm,conv,tm,expected) =
-  let
-    val _ = tprint nm
-    val res = conv tm
-  in
-    if aconv (rhs (concl res)) expected then OK()
-    else die "FAILED!"
-  end
-val _ = app convtest [
+val _ = app testutils.convtest [
   ("COND_CONV(1)", Conv.COND_CONV, “if b then (\x:'a. x) else (\y.y)”,
    “(\a:'a.a)”)
 ];
