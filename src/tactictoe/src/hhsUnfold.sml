@@ -10,7 +10,7 @@
 structure hhsUnfold :> hhsUnfold =
 struct
 
-open HolKernel Abbrev boolLib hhsLexer hhsTools hhsInfix hhsExec hhsOpen
+open HolKernel Abbrev boolLib hhsLexer hhsTools hhsInfix hhsOpen
 
 val ERR = mk_HOL_ERR "hhsUnfold"
 
@@ -18,11 +18,9 @@ val ERR = mk_HOL_ERR "hhsUnfold"
    Debugging
    -------------------------------------------------------------------------- *)
 
-val cthy_glob = ref "scratch"
 val hhs_unfold_dir = tactictoe_dir ^ "/unfold_log"
 val hhs_scripts_dir = tactictoe_dir ^ "/scripts"
-fun debug_unfold s = append_endline (hhs_unfold_dir ^ "/" ^ !cthy_glob) s
-val loadl_glob = ref []
+val loadl_glob = ref [] (* not usable: missing a.b *)
 
 (* --------------------------------------------------------------------------
    Program representation and stack
@@ -54,9 +52,6 @@ datatype sketch_t =
 
 val (infix_glob : (string * infixity_t) list ref) = ref []
 val open_cache = ref []
-val cthy_stack_dict = ref (dempty String.compare)
-val name_number = ref 0
-fun incr x = x := (!x) + 1
 
 fun hd_code_par2 m = 
   (hd m = Code ("(",Protect) orelse hd m = Code ("{",Protect)) 
@@ -685,15 +680,7 @@ fun open_struct_aux stack s'=
     else
       let 
         val l0 = String.tokens (fn x => x = #".") s
-        val open_dir = tactictoe_dir ^ "/open/" ^ s 
-        val _ = OS.FileSys.mkDir open_dir handle _ => ()
-        val (l1,l2,l3) = 
-          ((readl (open_dir ^ "/values"),
-           readl (open_dir ^ "/constructors"),
-           readl (open_dir ^ "/exceptions"))
-           handle Io _ => all_values s)
-        val l4 = readl (open_dir ^ "/structures") 
-           handle Io _ => all_structures s
+        val (l1,l2,l3,l4) = read_open s handle Io _ => export_struct s
         fun f constr a = 
           let fun g l = 
             (String.concatWith "." (l @ [a]), constr (s ^ "." ^ a)) 
@@ -720,7 +707,8 @@ fun open_struct stack s' = total_time open_time (open_struct_aux stack) s'
 fun is_watch_name x = mem (drop_sig x) (store_thm_list @ name_thm_list)
 
 fun mk_fetch b =
-  map (Code o protect) ["(","DB.fetch",mlquote (!cthy_glob),mlquote b,")"]
+  map (Code o protect) 
+    ["(","DB.fetch",mlquote (!cthy_unfold_glob),mlquote b,")"]
 
 fun replace_fetch l = case l of
     [] => []
@@ -786,20 +774,6 @@ fun decide_head stack head = case head of
     end
   | _ => raise ERR "decide_head" ""
 
-fun fetch_theorems idl =
-  let
-    fun rep_fetch id = 
-      Replace ["(","DB.fetch",mlquote (!cthy_glob),mlquote id,")"]
-    val dict = !cthy_stack_dict
-    fun f id = 
-      if dmem id dict then (id,rep_fetch id)
-      else if dmem (id ^ "_def") dict then (id,rep_fetch (id ^ "_def"))
-      else if dmem (id ^ "_DEF") dict then (id,rep_fetch (id ^ "_DEF"))
-      else (debug_unfold ("watch: " ^ id); (id,Watch))
-  in
-    mapfilter f idl
-  end
-
 fun dest_replace x = case x of 
     Replace sl => sl
   | SReplace sl => sl
@@ -821,10 +795,7 @@ fun unfold in_flag stack program = case program of
         if mem s ["val","fun"]
         then
           if exists is_watch_tag fetch_body
-          then 
-            if s = "fun" 
-            then map watch [hd idl]
-            else fetch_theorems idl
+          then map watch idl
           else
             if s = "val" 
             then stackvl_of_value idl new_head fetch_body
@@ -887,6 +858,7 @@ fun extract_thy file =
 
 val oc = ref TextIO.stdOut
 fun os s = TextIO.output (!oc, s)
+fun osn s = TextIO.output (!oc, s ^ "\n")
 
 fun rm_endline s =
   let fun f c = if c = #"\n" then #" " else c in implode (map f (explode s)) end
@@ -908,13 +880,13 @@ val infix_decl = tactictoe_dir ^ "/src/infix_file.sml"
 fun output_header cthy file = 
   (
   (* Necessary because of cakeml auto-documentation. *)
-  app os 
+  app osn
   [
-  "(* ========================================================================== *)\n",
-  "(* This file was modifed by TacticToe.                                        *)\n",
-  "(* ========================================================================== *)\n"
+  "(* ========================================================================== *)",
+  "(* This file was modifed by TacticToe.                                        *)",
+  "(* ========================================================================== *)"
   ];
-  os "load \"hhsRecord\";\n";
+  osn "load \"hhsRecord\";";
   if !interactive_flag 
   then 
     let 
@@ -923,10 +895,11 @@ fun output_header cthy file =
       val _ = OS.Process.system cmd
       val sl = map mlquote (readl temp)
     in
-      os "hhsRecord.set_irecord ();\n";
-      os ("List.app load [" ^ String.concatWith ", " sl ^ "];\n")
+      osn "hhsRecord.set_irecord ();";
+      osn "fun load_err s = load s handle _ => ();";
+      osn ("List.app load_err [" ^ String.concatWith ", " sl ^ "];")
     end
-  else os "hhsRecord.set_erecord ();\n"
+  else osn "hhsRecord.set_erecord ();"
   ;
   app os (bare_readl infix_decl);
   os "open hhsRecord;\n";
@@ -938,22 +911,28 @@ fun output_foot cthy file =
 
 fun start_unfold_thy cthy =
   (
-  cthy_glob := cthy;
+  print_endline cthy;
+  loadl_glob := [];
+  cthy_unfold_glob := cthy;
   mkDir_err hhs_open_dir;
   mkDir_err hhs_unfold_dir;
   erase_file (hhs_unfold_dir ^ "/" ^ cthy);
-  mkDir_err hhs_scripts_dir;
-  erase_file (hhs_scripts_dir ^ "/" ^ cthy);
+  if not (!interactive_flag)
+  then   
+     (
+     mkDir_err hhs_scripts_dir;
+     erase_file (hhs_scripts_dir ^ "/" ^ cthy)
+     )
+  else ()
+  ;
   (* statistics *)
   n_store_thm := 0;
-  name_number := 0;
   open_time := 0.0; 
   replace_special_time := 0.0;
   replace_id_time := 0.0;
   push_time := 0.0;
   (* initial stack *)
   infix_glob := overlay_infixity;
-  cthy_stack_dict := dnew String.compare (open_struct [] (cthy ^ "Theory"));
   (* cache *)
   open_cache := []
   )
@@ -984,38 +963,48 @@ fun unquoteString s =
 
 val copy_scripts = tactictoe_dir ^ "/copy_scripts.sh"
 
+fun sketch_wrap file =
+  let
+    val sl = readl file
+    val s1 = rm_endline (rm_comment (String.concatWith " " sl))
+    val s2 = unquoteString s1
+    val sl3 = hhs_lex s2
+  in
+    sketch sl3
+  end
+
+fun unfold_wrap p =
+  let val basis_dict = dnew String.compare (map protect basis) in
+    unfold 0 [basis_dict] p
+  end
+
+(* ---------------------------------------------------------------------------
+   Evaluation version
+   -------------------------------------------------------------------------- *)
+
 fun erewrite_script file = 
-  let 
+  if extract_thy file = "bool" then () else
+  let
     val _ = interactive_flag := false
     val cthy = extract_thy file
+    val _ = start_unfold_thy cthy
+    val local_file = rm_prefix file (HOLDIR ^ "/")
+    val file_out = hhs_scripts_dir ^ "/" ^ cthy
+    val p0 = sketch_wrap file
+    val p2 = unfold_wrap p0
+    val sl5 = modified_program false p2
   in
-    if cthy = "bool" then () else
-      let
-        val _ = print (cthy ^ "\n");
-        val local_file = rm_prefix file (HOLDIR ^ "/")
-        val _ = start_unfold_thy cthy
-        val file_out = hhs_scripts_dir ^ "/" ^ cthy       
-        val sl = readl file
-        val s1 = rm_endline (rm_comment (String.concatWith " " sl))
-        val s2 = unquoteString s1
-        val sl3 = hhs_lex s2
-        val p0 = sketch sl3
-        val basis_dict = dnew String.compare (map protect basis)
-        val p2 = unfold 0 [basis_dict] p0
-        val sl5 = modified_program false p2
-      in
-        if !n_store_thm = 0 then () else
-        (
-        oc := TextIO.openOut file_out;
-        output_header cthy file;
-        print_sl sl5;
-        output_foot cthy file;
-        TextIO.closeOut (!oc);
-        end_unfold_thy ();
-        append_endline copy_scripts 
-          (String.concatWith " " ["cp",quote file_out,quote local_file])
-        )
-      end
+    if !n_store_thm = 0 then () else
+    (
+    oc := TextIO.openOut file_out;
+    output_header cthy file;
+    print_sl sl5;
+    output_foot cthy file;
+    TextIO.closeOut (!oc);
+    end_unfold_thy ();
+    append_endline copy_scripts 
+      (String.concatWith " " ["cp",quote file_out,quote local_file])
+    )
   end
 
 fun hol_scripts () =
@@ -1057,66 +1046,55 @@ fun cakeml_scripts cakeml_dir =
     readl file
   end
 
-fun rm_ext s = #base (OS.Path.splitBaseExt s);
-  
-fun irewrite_script file =
-  let
-    val _ = interactive_flag := true
-    val _ = loadl_glob := []
-    val cthy = extract_thy file
-    val _ = print_endline cthy
-    val file_out = rm_ext file ^ "_tactictoe.sml"
-    val sl = readl file
-    val s1 = rm_endline (rm_comment (String.concatWith " " sl))
-    val s2 = unquoteString s1
-    val sl3 = hhs_lex s2
-    val _ = start_unfold_thy cthy
-    val p0 = sketch sl3
-    val basis_dict = dnew String.compare (map protect basis)
-    val p2 = unfold 0 [basis_dict] p0
-    val sl5 = modified_program false p2
-  in
-    if !n_store_thm = 0 then () else
-    (
+(* ---------------------------------------------------------------------------
+   Interactive version
+   -------------------------------------------------------------------------- *)
+
+fun name_inter file = #base (OS.Path.splitBaseExt file) ^ "_tactictoe.sml"
+
+fun print_program cthy file sl =
+  if !n_store_thm = 0 then () else
+  let val file_out = name_inter file in
     oc := TextIO.openOut file_out;
     output_header cthy file;
-    print_sl sl5;
+    print_sl sl;
     output_foot cthy file;
-    TextIO.closeOut (!oc);
+    TextIO.closeOut (!oc)
+  end
+
+fun irewrite_script file =
+  if extract_thy file = "bool" then () else
+  let
+    val _ = interactive_flag := true
+    val cthy = extract_thy file
+    val _ = start_unfold_thy cthy
+    val p0 = sketch_wrap file
+    val p2 = unfold_wrap p0
+    val sl5 = modified_program false p2
+  in
+    print_program cthy file sl5;
     end_unfold_thy ()
-    )
   end
 
 fun irecord_script file =
-  let
-    val file_out = rm_ext file ^ "_tactictoe.sml"
-    val dir = #dir (OS.Path.splitDirFile file_out)
-    val basename = #file (OS.Path.splitDirFile file_out)
-    val cmd0 = "cd " ^ dir
-    val cmd1 = HOLDIR ^ "/bin/hol" ^ " < " ^ basename
-  in 
-    irewrite_script file;
-    if dir = "" 
-      then ignore (OS.Process.system cmd1)
-      else ignore (OS.Process.system (cmd0 ^ "; " ^ cmd1))
-  end
+  (irewrite_script file; run_hol (name_inter file))
   
 end (* struct *)
 
-
 (* ---------------------------------------------------------------------------
   HOL:  
-
+  hol_scripts ();
+  
   rlwrap hol
   load "hhsUnfold";
   open hhsUnfold;
   
+  app irewrite_script (hol_scripts ());
+  app irecord_script (hol_scripts ());
+  
+  irecord_script "/home/tgauthier/HOL/src/1/ConseqConvScript.sml";
   record_script "complexScript.sml";
-  
-  
-  
-  
-  rewrite_hol_scripts ();         
+  erewrite_hol_scripts ();
   --------------------------------------------------------------------------- *)
   
   
